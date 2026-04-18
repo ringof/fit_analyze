@@ -81,6 +81,7 @@ Reported separately:
 - Avg power, speed, HR, cadence median
 - Section normalized power (computed from per-second data — see NP note below)
 - Efficiency Index (NP / avg active HR)
+- Sensor dropout correction count (see De-spiking below)
 - Stop detection: flags any stop >30s that may affect Chung data quality
 
 ### Wind conditions (KNZY / NAS North Island)
@@ -160,6 +161,23 @@ sheltered urban sections with different HR dynamics.
 
 EI is one signal among several. It should be interpreted alongside power, HR
 zones, cadence, and wind conditions rather than in isolation.
+
+### De-spiking (sensor dropout correction)
+
+Power and cadence sensors produce brief dropouts — values falling to zero
+while the rider is clearly still pedaling. Two filters handle this:
+
+**Analysis (conservative):** `despike_conservative()` uses cross-channel
+validation. Power is only corrected when cadence proves the rider is pedaling
+(cadence > 30 rpm but power near zero), and cadence is only corrected when
+power proves pedaling (power > 20W but cadence near zero). If both channels
+drop simultaneously, the values are left alone — it could be genuine coasting.
+Replacement values are the median of clean neighbors within ±15 samples.
+
+**Plot (aggressive):** `despike()` replaces all near-zero values while speed
+is high, regardless of the other channel, followed by a Hampel filter pass.
+This produces cleaner visualizations but would over-correct coasting periods
+in metrics. The plot title notes "(power/cadence filtered)".
 
 ### Active detection
 

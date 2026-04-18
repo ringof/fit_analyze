@@ -70,6 +70,95 @@ WIND_DIR_DEG = {
 
 
 # ── utility functions ─────────────────────────────────────────────────────────
+def despike(series, spd_list, dropout_thresh=5, speed_thresh=2.0, lookback=15):
+    """
+    Two-pass de-spike filter for power/cadence sensor dropouts.
+
+    Pass 1 — dropout replacement: near-zero values while rider is moving
+    (speed > speed_thresh) are replaced with the median of clean neighbors
+    within ±lookback samples. Catches clustered multi-sample dropout runs
+    that defeat pure Hampel (consecutive zeros corrupt the window median).
+
+    Pass 2 — Hampel filter: standard sliding-window median + MAD on the
+    cleaned series catches remaining isolated outliers. negative_only=True
+    preserves sprint peaks.
+
+    Returns (filtered_list, spike_mask).
+    """
+    n = len(series)
+    cleaned = list(series)
+    spikes = [False] * n
+
+    # Pass 1: replace obvious dropouts (near-zero while moving)
+    for i in range(n):
+        if series[i] > dropout_thresh:
+            continue
+        if spd_list[i] < speed_thresh:
+            continue  # genuinely stopped/slow — not a dropout
+        neighbors = []
+        for j in range(max(0, i - lookback), min(n, i + lookback + 1)):
+            if j != i and series[j] > dropout_thresh:
+                neighbors.append(series[j])
+        if len(neighbors) >= 3:
+            med = statistics.median(neighbors)
+            if med > dropout_thresh * 4:  # neighbors substantially higher
+                cleaned[i] = med
+                spikes[i] = True
+
+    # Pass 2: Hampel filter on cleaned series (negative_only)
+    half = 3  # window=7: ±3 samples
+    threshold = 3.0
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        w = cleaned[lo:hi]
+        med = statistics.median(w)
+        mad = statistics.median([abs(x - med) for x in w])
+        sigma = 1.4826 * mad  # scale MAD to approximate std dev
+        if sigma == 0:
+            continue
+        if cleaned[i] < med - threshold * sigma:
+            cleaned[i] = med
+            spikes[i] = True
+
+    return cleaned, spikes
+
+
+def despike_conservative(pwr, cad, lookback=15):
+    """
+    Conservative de-spike using cross-channel validation.
+    Only corrects physically impossible readings:
+    - Power near-zero but cadence high → power sensor dropout
+    - Cadence near-zero but power high → cadence sensor dropout
+    If both are near-zero, leaves them alone (could be genuine coasting).
+    Returns (filtered_pwr, filtered_cad, pwr_spike_mask, cad_spike_mask).
+    """
+    n = len(pwr)
+    fp = list(pwr)
+    fc = list(cad)
+    pwr_fixed = [False] * n
+    cad_fixed = [False] * n
+
+    for i in range(n):
+        # Power dropout: power near-zero but cadence proves rider is pedaling
+        if pwr[i] <= 5 and cad[i] > 30:
+            neighbors = [pwr[j] for j in range(max(0, i - lookback), min(n, i + lookback + 1))
+                         if j != i and pwr[j] > 5]
+            if len(neighbors) >= 3:
+                fp[i] = statistics.median(neighbors)
+                pwr_fixed[i] = True
+
+        # Cadence dropout: cadence near-zero but power proves rider is pedaling
+        if cad[i] <= 5 and pwr[i] > 20:
+            neighbors = [cad[j] for j in range(max(0, i - lookback), min(n, i + lookback + 1))
+                         if j != i and cad[j] > 5]
+            if len(neighbors) >= 3:
+                fc[i] = statistics.median(neighbors)
+                cad_fixed[i] = True
+
+    return fp, fc, pwr_fixed, cad_fixed
+
+
 def sc_to_deg(sc):
     return sc * (180.0 / 2**31)
 
@@ -392,18 +481,26 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
 
     if strand_found:
         sr         = records[strand_start_idx:strand_end_idx+1]
-        sr_active  = [r for r in sr if r['cad'] > ACTIVE_CAD_MIN or r['pwr'] > ACTIVE_PWR_MIN]
-        sr_pwr     = [r['pwr'] for r in sr_active if r['pwr'] > 0]
-        sr_hr      = [r['hr']  for r in sr_active if r['hr']  > 0]
-        sr_cad     = [r['cad'] for r in sr_active if r['cad'] > 0]
-        sr_spd     = [r['spd'] for r in sr_active if r['spd'] > 0]
+
+        # Conservative de-spike: cross-channel validation (cadence proves pedaling, etc.)
+        sr_raw_pwr = [r['pwr'] for r in sr]
+        sr_raw_cad = [r['cad'] for r in sr]
+        sr_fpwr, sr_fcad, sr_pf, sr_cf = despike_conservative(sr_raw_pwr, sr_raw_cad)
+        sr_despiked = sum(sr_pf) + sum(sr_cf)
+
+        sr_active  = [i for i in range(len(sr))
+                      if sr_fcad[i] > ACTIVE_CAD_MIN or sr_fpwr[i] > ACTIVE_PWR_MIN]
+        sr_pwr     = [sr_fpwr[i] for i in sr_active if sr_fpwr[i] > 0]
+        sr_hr      = [sr[i]['hr']  for i in sr_active if sr[i]['hr']  > 0]
+        sr_cad     = [sr_fcad[i]   for i in sr_active if sr_fcad[i]   > 0]
+        sr_spd     = [sr[i]['spd'] for i in sr_active if sr[i]['spd'] > 0]
 
         sr_avg_pwr     = statistics.mean(sr_pwr)   if sr_pwr  else 0
         sr_avg_hr      = statistics.mean(sr_hr)    if sr_hr   else 0
         sr_avg_cad_med = statistics.median(sr_cad) if sr_cad  else 0
         sr_avg_spd_ms  = statistics.mean(sr_spd)   if sr_spd  else 0
         sr_avg_spd_mph = sr_avg_spd_ms * 2.237
-        sr_np          = normalized_power([r['pwr'] for r in sr_active])
+        sr_np          = normalized_power([sr_fpwr[i] for i in sr_active])
         sr_ei          = sr_np / sr_avg_hr if sr_avg_hr else 0
         sr_active_pct  = len(sr_active) / len(sr) * 100 if sr else 0
         sr_start_mi    = sr[0]['dist'] / 1609.34
@@ -518,6 +615,8 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
         p(f"  Cadence median:      {sr_avg_cad_med:.0f} rpm")
         p(f"  Normalized power:    {sr_np:.0f} W")
         p(f"  Efficiency Index:    {sr_ei:.3f} W/bpm  ← primary trend metric")
+        if sr_despiked:
+            p(f"  Sensor dropouts:     {sr_despiked} corrected (cross-channel validated)")
         if strand_stops:
             p(f"  !! Stops >30s:       {len(strand_stops)} detected")
             for sdist, sdur in strand_stops:
@@ -632,23 +731,33 @@ def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_pat
     else:
         base = 'strand_plot.png'
 
-    # Build time axis and extract series
-    active_mask = [r['cad'] > ACTIVE_CAD_MIN or r['pwr'] > ACTIVE_PWR_MIN
-                   for r in sr]
+    # De-spike power and cadence (sensor dropouts)
+    raw_pwr = [r['pwr'] for r in sr]
+    raw_cad = [r['cad'] for r in sr]
+    spd_list = [r['spd'] for r in sr]
+    filt_pwr, pwr_spikes = despike(raw_pwr, spd_list)
+    filt_cad, cad_spikes = despike(raw_cad, spd_list)
+    n_pwr_spikes = sum(pwr_spikes)
+    n_cad_spikes = sum(cad_spikes)
+    print(f"Despiked: {n_pwr_spikes} power dropouts, {n_cad_spikes} cadence dropouts corrected")
 
-    # Compute averages for reference lines
-    pwr_vals  = [r['pwr'] for r, a in zip(sr, active_mask) if a and r['pwr'] > 0]
+    # Active mask uses filtered data so dropouts don't create false inactive gaps
+    active_mask = [filt_cad[i] > ACTIVE_CAD_MIN or filt_pwr[i] > ACTIVE_PWR_MIN
+                   for i in range(len(sr))]
+
+    # Compute averages from filtered active values for reference lines
+    pwr_vals  = [filt_pwr[i] for i in range(len(sr)) if active_mask[i] and filt_pwr[i] > 0]
     hr_vals   = [r['hr']  for r, a in zip(sr, active_mask) if a and r['hr']  > 0]
     spd_vals  = [r['spd'] * 2.237 for r, a in zip(sr, active_mask) if a and r['spd'] > 0]
     avg_pwr   = statistics.mean(pwr_vals)  if pwr_vals  else 0
     avg_hr    = statistics.mean(hr_vals)   if hr_vals   else 0
     avg_spd   = statistics.mean(spd_vals)  if spd_vals  else 0
 
-    # Write data file: time_min pwr hr cad spd active(0/1)
+    # Write data file: time_min pwr hr cad spd active filt_pwr filt_cad pwr_spike cad_spike
     tmpdir = tempfile.mkdtemp()
     data_file = os.path.join(tmpdir, 'strand.dat')
     with open(data_file, 'w') as f:
-        f.write("# time_min  pwr  hr  cad  spd_mph  active\n")
+        f.write("# time_min  pwr  hr  cad  spd_mph  active  filt_pwr  filt_cad  pwr_spike  cad_spike\n")
         for i, r in enumerate(sr):
             t   = i / 60.0
             pwr = r['pwr']
@@ -656,14 +765,19 @@ def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_pat
             cad = r['cad'] if r['cad'] > 0 else 0
             spd = r['spd'] * 2.237
             act = 1 if active_mask[i] else 0
-            f.write(f"{t:.4f}  {pwr}  {hr}  {cad}  {spd:.2f}  {act}\n")
+            fp  = filt_pwr[i]
+            fc  = filt_cad[i]
+            ps  = 1 if pwr_spikes[i] else 0
+            cs  = 1 if cad_spikes[i] else 0
+            f.write(f"{t:.4f}  {pwr}  {hr}  {cad}  {spd:.2f}  {act}  {fp:.0f}  {fc:.0f}  {ps}  {cs}\n")
 
     dist_start = sr[0]['dist']  / 1609.34
     dist_end   = sr[-1]['dist'] / 1609.34
     dur_mins   = len(sr) / 60.0
     title_str  = (f"Silver Strand  mile {dist_start:.1f}-{dist_end:.1f}"
                   f"  {dur_mins:.0f} min"
-                  + (f"  |  {wind_desc}" if wind_desc else ""))
+                  + (f"  |  {wind_desc}" if wind_desc else "")
+                  + f"  (power/cadence filtered)")
 
     # HR zone boundaries for reference lines
     zones = compute_zones(DEFAULT_REST_HR, DEFAULT_MAX_HR)
@@ -680,12 +794,12 @@ set key top right font "Sans,8"
 set lmargin 10
 set rmargin 4
 
-# Panel 1: Power
+# Panel 1: Power (filtered, with dropout markers at corrected value)
 set ylabel "Power (W)"
 set yrange [0:*]
-plot "{data_file}" using 1:($6==1 ? $2 : 1/0) with lines lc rgb "#2196F3" lw 1 title "Power", \
+plot "{data_file}" using 1:($6==1 ? $7 : 1/0) with lines lc rgb "#2196F3" lw 1 title "Power", \
      {avg_pwr:.0f} with lines lc rgb "#2196F3" lw 1 dt 2 title "avg {avg_pwr:.0f}W", \
-     "{data_file}" using 1:($6==0 ? $2 : 1/0) with lines lc rgb "#cccccc" lw 1 notitle
+     "{data_file}" using 1:($6==0 ? $7 : 1/0) with lines lc rgb "#cccccc" lw 1 notitle
 
 # Panel 2: Heart rate with zone lines
 set ylabel "HR (bpm)"
@@ -698,17 +812,16 @@ set yrange [{z_boundaries[0]-5}:{z_boundaries[-1]+5}]
                      ' nohead lc rgb "#999999" lw 0.5 dt 2 front' + '\n')
             gp_script += arrow
     gp_script += f"""
-plot "{data_file}" using 1:($6==1 ? $3 : 1/0) with lines lc rgb "#E53935" lw 1 title "HR", \
-     {avg_hr:.0f} with lines lc rgb "#E53935" lw 1 dt 2 title "avg {avg_hr:.0f} bpm", \
-     "{data_file}" using 1:($6==0 ? $3 : 1/0) with lines lc rgb "#cccccc" lw 1 notitle
+plot "{data_file}" using 1:($3 > 0 ? $3 : 1/0) with lines lc rgb "#E53935" lw 1 title "HR", \
+     {avg_hr:.0f} with lines lc rgb "#E53935" lw 1 dt 2 title "avg {avg_hr:.0f} bpm"
 unset arrow
 
-# Panel 3: Cadence
+# Panel 3: Cadence (filtered, with dropout markers at corrected value)
 set ylabel "Cadence (rpm)"
 set yrange [0:*]
-plot "{data_file}" using 1:($6==1 ? $4 : 1/0) with lines lc rgb "#43A047" lw 1 title "Cadence", \
+plot "{data_file}" using 1:($6==1 ? $8 : 1/0) with lines lc rgb "#43A047" lw 1 title "Cadence", \
      90 with lines lc rgb "#888888" lw 1 dt 3 title "90 rpm target", \
-     "{data_file}" using 1:($6==0 ? $4 : 1/0) with lines lc rgb "#cccccc" lw 1 notitle
+     "{data_file}" using 1:($6==0 ? $8 : 1/0) with lines lc rgb "#cccccc" lw 1 notitle
 
 # Panel 4: Speed
 set ylabel "Speed (mph)"
