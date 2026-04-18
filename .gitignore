@@ -1,0 +1,4 @@
+*.fit
+*_summary.txt
+__pycache__/
+fit_files/
