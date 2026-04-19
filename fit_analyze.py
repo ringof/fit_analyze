@@ -327,23 +327,43 @@ def find_best_knzy_obs(observations, ride_start_utc):
         return None
 
     # Convert ride start to local Pacific time
-    ride_start_local = utc_to_local(ride_start_utc)
-    ride_day  = ride_start_local.day
-    ride_hour = ride_start_local.hour
-    ride_min  = ride_start_local.minute
+    ride_local = utc_to_local(ride_start_utc)
 
-    # Score each observation by time distance to ride start
-    # Prefer observations that are before or at ride start
+    # Build full datetimes for observations using ride date as anchor.
+    # KNZY page only provides day-of-month, so we infer month/year from
+    # the ride date. Handle month rollover: if obs day is much larger than
+    # ride day (e.g., obs=31, ride=1), the obs is from the prior month.
+    import calendar
     best = None
     best_delta = None
 
     for obs in observations:
-        # Reconstruct approximate datetime (same month/year assumed)
-        # Delta in minutes from ride start
-        day_diff = obs['day'] - ride_day
-        delta_minutes = (day_diff * 1440 +
-                        (obs['hour'] - ride_hour) * 60 +
-                        (obs['minute'] - ride_min))
+        # Anchor to ride's month/year
+        obs_year  = ride_local.year
+        obs_month = ride_local.month
+
+        if obs['day'] - ride_local.day > 15:
+            # Obs day is much larger — must be prior month
+            obs_month -= 1
+            if obs_month < 1:
+                obs_month = 12
+                obs_year -= 1
+        elif ride_local.day - obs['day'] > 15:
+            # Ride day is much larger — obs is from next month
+            obs_month += 1
+            if obs_month > 12:
+                obs_month = 1
+                obs_year += 1
+
+        # Clamp obs day to valid range for the resolved month
+        max_day = calendar.monthrange(obs_year, obs_month)[1]
+        obs_day = min(obs['day'], max_day)
+
+        obs_dt = ride_local.replace(year=obs_year, month=obs_month,
+                                    day=obs_day, hour=obs['hour'],
+                                    minute=obs['minute'], second=0,
+                                    microsecond=0)
+        delta_minutes = (obs_dt - ride_local).total_seconds() / 60
 
         # Prefer the closest preceding observation (delta <= 0), up to 2 hours before.
         # Fall back to future observations (up to +30 min) only if none preceding.
