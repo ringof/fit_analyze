@@ -157,22 +157,45 @@ def main():
         ride_local = utc_to_local(ride_utc)
         print(f"Ride UTC: {ride_utc}  →  Local: {ride_local.strftime('%H:%M %Z day %d')}")
 
+        import calendar
         best = None
         best_delta = None
         for obs in observations:
-            day_diff = obs['day'] - ride_local.day
-            delta = (day_diff * 1440 +
-                     (obs['hour'] - ride_local.hour) * 60 +
-                     (obs['minute'] - ride_local.minute))
+            # Build full datetime with month rollover detection
+            obs_year  = ride_local.year
+            obs_month = ride_local.month
+            if obs['day'] - ride_local.day > 15:
+                obs_month -= 1
+                if obs_month < 1:
+                    obs_month = 12
+                    obs_year -= 1
+            elif ride_local.day - obs['day'] > 15:
+                obs_month += 1
+                if obs_month > 12:
+                    obs_month = 1
+                    obs_year += 1
+            max_day = calendar.monthrange(obs_year, obs_month)[1]
+            obs_day = min(obs['day'], max_day)
+            obs_dt = ride_local.replace(year=obs_year, month=obs_month,
+                                        day=obs_day, hour=obs['hour'],
+                                        minute=obs['minute'], second=0,
+                                        microsecond=0)
+            delta = (obs_dt - ride_local).total_seconds() / 60
             in_window = -120 <= delta <= 30
             marker = ""
-            if in_window and (best_delta is None or abs(delta) < abs(best_delta)):
-                best = obs
-                best_delta = delta
-                marker = " ← BEST"
+            # Prefer preceding observations, fall back to future
+            if in_window:
+                if best_delta is None:
+                    best, best_delta, marker = obs, delta, " ← BEST"
+                elif delta <= 0 and best_delta > 0:
+                    best, best_delta, marker = obs, delta, " ← BEST"
+                elif delta <= 0 and best_delta <= 0 and delta > best_delta:
+                    best, best_delta, marker = obs, delta, " ← BEST"
+                elif delta > 0 and best_delta > 0 and delta < best_delta:
+                    best, best_delta, marker = obs, delta, " ← BEST"
             if abs(delta) < 180:  # only show nearby
                 print(f"  Day {obs['day']:2d} {obs['hour']:02d}:{obs['minute']:02d}"
-                      f" | delta={delta:+4d}m | {'IN' if in_window else 'out'}"
+                      f" | delta={delta:+4.0f}m | {'IN' if in_window else 'out'}"
                       f" | {obs['wind_dir']} {obs['wind_spd']:.0f}mph{marker}")
 
         print()
