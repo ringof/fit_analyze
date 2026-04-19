@@ -8,6 +8,7 @@ import urllib.request
 import re
 import sys
 import argparse
+import calendar
 from datetime import datetime, timezone, timedelta
 
 try:
@@ -157,7 +158,6 @@ def main():
         ride_local = utc_to_local(ride_utc)
         print(f"Ride UTC: {ride_utc}  →  Local: {ride_local.strftime('%H:%M %Z day %d')}")
 
-        import calendar
         best = None
         best_delta = None
         for obs in observations:
@@ -175,7 +175,10 @@ def main():
                     obs_month = 1
                     obs_year += 1
             max_day = calendar.monthrange(obs_year, obs_month)[1]
-            obs_day = min(obs['day'], max_day)
+            obs_day = obs['day']
+            if obs_day > max_day:
+                print(f"  DEBUG: KNZY obs day {obs_day} clamped to {max_day} for {obs_year}-{obs_month:02d}")
+                obs_day = max_day
             obs_dt = ride_local.replace(year=obs_year, month=obs_month,
                                         day=obs_day, hour=obs['hour'],
                                         minute=obs['minute'], second=0,

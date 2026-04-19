@@ -16,6 +16,7 @@ import argparse
 import statistics
 import math
 import re
+import calendar
 import urllib.request
 from datetime import datetime, timezone, timedelta
 
@@ -333,7 +334,6 @@ def find_best_knzy_obs(observations, ride_start_utc):
     # KNZY page only provides day-of-month, so we infer month/year from
     # the ride date. Handle month rollover: if obs day is much larger than
     # ride day (e.g., obs=31, ride=1), the obs is from the prior month.
-    import calendar
     best = None
     best_delta = None
 
@@ -357,7 +357,10 @@ def find_best_knzy_obs(observations, ride_start_utc):
 
         # Clamp obs day to valid range for the resolved month
         max_day = calendar.monthrange(obs_year, obs_month)[1]
-        obs_day = min(obs['day'], max_day)
+        obs_day = obs['day']
+        if obs_day > max_day:
+            print(f"  DEBUG: KNZY obs day {obs_day} clamped to {max_day} for {obs_year}-{obs_month:02d}")
+            obs_day = max_day
 
         obs_dt = ride_local.replace(year=obs_year, month=obs_month,
                                     day=obs_day, hour=obs['hour'],
