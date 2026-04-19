@@ -213,7 +213,7 @@ in the output is approximate context, not a precise measurement.
 Located near the Coronado ferry landing, close to the start of the route.
 Observations are published at :52 past each hour. The script selects the
 observation with the smallest time offset within a −120 to +30 minute window
-relative to ride start (UTC converted to PDT = UTC−7).
+relative to ride start (UTC converted to Pacific local time via `zoneinfo`).
 
 The KNZY page is fetched by HTTP with HTML parsing. Page structure changes
 will break the parser. Use `knzy_test.py` to diagnose fetch issues.
