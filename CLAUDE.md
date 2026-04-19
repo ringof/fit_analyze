@@ -32,8 +32,7 @@ Single-script design (`fit_analyze.py`, ~800 lines). Key functions:
 | Function | Purpose |
 |----------|---------|
 | `analyze()` | Core pipeline: parse FIT, compute metrics, detect Strand section |
-| `despike_conservative()` | Cross-channel de-spike for metrics (cadence validates power, vice versa) |
-| `despike()` | Aggressive de-spike for plot (speed-aware + Hampel filter) |
+| `despike()` | De-spike for plot visualization only (speed-aware + Hampel filter) |
 | `fetch_knzy_observations()` | Scrape NWS weather station HTML |
 | `find_best_knzy_obs()` | Match observation to ride time (±120 min) |
 | `normalized_power()` | Coggan NP from 30s rolling average |

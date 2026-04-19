@@ -130,40 +130,6 @@ def despike(series, spd_list, dropout_thresh=5, speed_thresh=2.0, lookback=15):
     return cleaned, spikes
 
 
-def despike_conservative(pwr, cad, lookback=15):
-    """
-    Conservative de-spike using cross-channel validation.
-    Only corrects physically impossible readings:
-    - Power near-zero but cadence high → power sensor dropout
-    - Cadence near-zero but power high → cadence sensor dropout
-    If both are near-zero, leaves them alone (could be genuine coasting).
-    Returns (filtered_pwr, filtered_cad, pwr_spike_mask, cad_spike_mask).
-    """
-    n = len(pwr)
-    fp = list(pwr)
-    fc = list(cad)
-    pwr_fixed = [False] * n
-    cad_fixed = [False] * n
-
-    for i in range(n):
-        # Power dropout: power near-zero but cadence proves rider is pedaling
-        if pwr[i] <= 5 and cad[i] > 30:
-            neighbors = [pwr[j] for j in range(max(0, i - lookback), min(n, i + lookback + 1))
-                         if j != i and pwr[j] > 5]
-            if len(neighbors) >= 3:
-                fp[i] = statistics.median(neighbors)
-                pwr_fixed[i] = True
-
-        # Cadence dropout: cadence near-zero but power proves rider is pedaling
-        if cad[i] <= 5 and pwr[i] > 20:
-            neighbors = [cad[j] for j in range(max(0, i - lookback), min(n, i + lookback + 1))
-                         if j != i and cad[j] > 5]
-            if len(neighbors) >= 3:
-                fc[i] = statistics.median(neighbors)
-                cad_fixed[i] = True
-
-    return fp, fc, pwr_fixed, cad_fixed
-
 
 def utc_to_local(dt_utc):
     """Convert UTC datetime to America/Los_Angeles, with fixed UTC-7 fallback."""
@@ -530,26 +496,18 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
 
     if strand_found:
         sr         = records[strand_start_idx:strand_end_idx+1]
-
-        # Conservative de-spike: cross-channel validation (cadence proves pedaling, etc.)
-        sr_raw_pwr = [r['pwr'] for r in sr]
-        sr_raw_cad = [r['cad'] for r in sr]
-        sr_fpwr, sr_fcad, sr_pf, sr_cf = despike_conservative(sr_raw_pwr, sr_raw_cad)
-        sr_despiked = sum(sr_pf) + sum(sr_cf)
-
-        sr_active  = [i for i in range(len(sr))
-                      if sr_fcad[i] > ACTIVE_CAD_MIN or sr_fpwr[i] > ACTIVE_PWR_MIN]
-        sr_pwr     = [sr_fpwr[i] for i in sr_active if sr_fpwr[i] > 0]
-        sr_hr      = [sr[i]['hr']  for i in sr_active if sr[i]['hr']  > 0]
-        sr_cad     = [sr_fcad[i]   for i in sr_active if sr_fcad[i]   > 0]
-        sr_spd     = [sr[i]['spd'] for i in sr_active if sr[i]['spd'] > 0]
+        sr_active  = [r for r in sr if r['cad'] > ACTIVE_CAD_MIN or r['pwr'] > ACTIVE_PWR_MIN]
+        sr_pwr     = [r['pwr'] for r in sr_active if r['pwr'] > 0]
+        sr_hr      = [r['hr']  for r in sr_active if r['hr']  > 0]
+        sr_cad     = [r['cad'] for r in sr_active if r['cad'] > 0]
+        sr_spd     = [r['spd'] for r in sr_active if r['spd'] > 0]
 
         sr_avg_pwr     = statistics.mean(sr_pwr)   if sr_pwr  else 0
         sr_avg_hr      = statistics.mean(sr_hr)    if sr_hr   else 0
         sr_avg_cad_med = statistics.median(sr_cad) if sr_cad  else 0
         sr_avg_spd_ms  = statistics.mean(sr_spd)   if sr_spd  else 0
         sr_avg_spd_mph = sr_avg_spd_ms * 2.237
-        sr_np          = normalized_power([sr_fpwr[i] for i in sr_active])
+        sr_np          = normalized_power([r['pwr'] for r in sr_active])
         sr_ei          = sr_np / sr_avg_hr if sr_avg_hr else 0
         sr_active_pct  = len(sr_active) / len(sr) * 100 if sr else 0
         sr_start_mi    = sr[0]['dist'] / 1609.34
@@ -664,8 +622,6 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
         p(f"  Cadence median:      {sr_avg_cad_med:.0f} rpm")
         p(f"  Normalized power:    {sr_np:.0f} W")
         p(f"  Efficiency Index:    {sr_ei:.3f} W/bpm  ← primary trend metric")
-        if sr_despiked:
-            p(f"  Sensor dropouts:     {sr_despiked} corrected (cross-channel validated)")
         if strand_stops:
             p(f"  !! Stops >30s:       {len(strand_stops)} detected")
             for sdist, sdur in strand_stops:
@@ -750,7 +706,6 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
         'strand_stats': {
             'active_pct':  sr_active_pct,
             'ei':          sr_ei,
-            'despiked':    sr_despiked,
             'stops':       len(strand_stops),
         } if strand_found else None,
     }
@@ -849,12 +804,11 @@ def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_pat
     if strand_stats:
         stats_parts.append(f"Active {strand_stats['active_pct']:.0f}%")
         stats_parts.append(f"EI {strand_stats['ei']:.3f}")
-        stats_parts.append(f"{strand_stats['despiked']} dropouts corrected")
         if strand_stats['stops'] > 0:
             stats_parts.append(f"{strand_stats['stops']} stops >30s")
         else:
             stats_parts.append("no stops >30s")
-    stats_parts.append("power/cadence filtered")
+    stats_parts.append(f"plot filtered ({n_pwr_spikes}pwr {n_cad_spikes}cad)")
     title_line2 = "  |  ".join(stats_parts)
 
     # HR zone boundaries for reference lines
