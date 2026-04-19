@@ -747,12 +747,18 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
         'strand_start_idx': strand_start_idx if strand_found else None,
         'strand_end_idx':   strand_end_idx   if strand_found else None,
         'wind_desc':        wind_desc if has_wind else '',
+        'strand_stats': {
+            'active_pct':  sr_active_pct,
+            'ei':          sr_ei,
+            'despiked':    sr_despiked,
+            'stops':       len(strand_stops),
+        } if strand_found else None,
     }
     return "\n".join(out), plot_data
 
 
 
-def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_path=""):
+def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_path="", strand_stats=None):
     """
     Plot Silver Strand section data using gnuplot.
     Produces both a PNG file and an interactive window.
@@ -823,10 +829,33 @@ def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_pat
     dist_start = sr[0]['dist']  / 1609.34
     dist_end   = sr[-1]['dist'] / 1609.34
     dur_mins   = len(sr) / 60.0
-    title_str  = (f"Silver Strand  mile {dist_start:.1f}-{dist_end:.1f}"
-                  f"  {dur_mins:.0f} min"
-                  + (f"  |  {wind_desc}" if wind_desc else "")
-                  + f"  (power/cadence filtered)")
+
+    # Build entry timestamp from Strand start record
+    entry_ts = sr[0].get('ts')
+    if entry_ts:
+        entry_local = utc_to_local(entry_ts.replace(tzinfo=timezone.utc) if entry_ts.tzinfo is None else entry_ts)
+        date_str = entry_local.strftime('%Y-%m-%d %H:%M %Z')
+    else:
+        date_str = ''
+
+    # Title line 1: date/time and route info
+    title_line1 = (f"{date_str}  —  "
+                   f"Silver Strand  mile {dist_start:.1f}-{dist_end:.1f}"
+                   f"  {dur_mins:.0f} min"
+                   + (f"  |  {wind_desc}" if wind_desc else ""))
+
+    # Title line 2: key stats
+    stats_parts = []
+    if strand_stats:
+        stats_parts.append(f"Active {strand_stats['active_pct']:.0f}%")
+        stats_parts.append(f"EI {strand_stats['ei']:.3f}")
+        stats_parts.append(f"{strand_stats['despiked']} dropouts corrected")
+        if strand_stats['stops'] > 0:
+            stats_parts.append(f"{strand_stats['stops']} stops >30s")
+        else:
+            stats_parts.append("no stops >30s")
+    stats_parts.append("power/cadence filtered")
+    title_line2 = "  |  ".join(stats_parts)
 
     # HR zone boundaries for reference lines
     zones = compute_zones(DEFAULT_REST_HR, DEFAULT_MAX_HR)
@@ -836,7 +865,7 @@ def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_pat
     gp_script = f"""
 set terminal pngcairo size 1200,900 font "Sans,9"
 set output "{base}"
-set multiplot layout 4,1 title "{title_str}" font "Sans,10"
+set multiplot layout 4,1 title "{title_line1}\\n{title_line2}" font "Sans,10"
 set xrange [0:{dur_mins:.2f}]
 set grid ytics lc rgb "#cccccc" lw 0.5
 set key top right font "Sans,8"
@@ -947,7 +976,8 @@ def main():
                         plot_data['strand_start_idx'],
                         plot_data['strand_end_idx'],
                         wind_desc=wind_desc,
-                        fit_path=args.fit_file)
+                        fit_path=args.fit_file,
+                        strand_stats=plot_data.get('strand_stats'))
 
     out_path = args.fit_file.replace('.fit', '_summary.txt')
     try:
