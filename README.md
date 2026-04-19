@@ -232,7 +232,7 @@ and time-matching logic. Useful when auto-fetch produces unexpected results.
 ## Known limitations
 
 - KNZY fetching is HTML-scrape based and will break if NWS changes page structure.
-- Timezone handling assumes PDT (UTC−7). DST transitions are not handled automatically.
+- Timezone handling uses `zoneinfo` (Python 3.9+) for automatic PDT/PST. Falls back to fixed UTC−7 on older Python.
 - CdA is a single back-calculated estimate, not a fitted value.
 - Section detection depends on GPS quality; poor GPS near the entry box may
   cause the section to be missed or mis-anchored.
@@ -244,4 +244,4 @@ and time-matching logic. Useful when auto-fetch produces unexpected results.
 - `chung_fit.py` — CdA/Crr regression from accumulated DATA lines
 - Temperature correction to air density (RHO) from KNZY temperature field
 - Configurable route profiles beyond Silver Strand
-- Automatic PDT/PST DST detection
+- Remove Python 3.9+ requirement for zoneinfo (backports exist but add a dependency)

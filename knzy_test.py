@@ -10,8 +10,21 @@ import sys
 import argparse
 from datetime import datetime, timezone, timedelta
 
+try:
+    from zoneinfo import ZoneInfo
+    LA_TZ = ZoneInfo("America/Los_Angeles")
+except ImportError:
+    LA_TZ = None
+PDT_OFFSET = timedelta(hours=-7)  # fallback when zoneinfo unavailable
+
 KNZY_URL   = "https://forecast.weather.gov/data/obhistory/KNZY.html"
-PDT_OFFSET = timedelta(hours=-7)
+
+
+def utc_to_local(dt_utc):
+    """Convert UTC datetime to America/Los_Angeles, with fixed UTC-7 fallback."""
+    if LA_TZ is not None:
+        return dt_utc.astimezone(LA_TZ)
+    return dt_utc + PDT_OFFSET
 
 
 def get_cells(row_html):
@@ -141,16 +154,16 @@ def main():
         ride_utc = datetime.strptime(
             f"{args.date} {args.time_utc}:00", "%Y-%m-%d %H:%M:%S"
         ).replace(tzinfo=timezone.utc)
-        ride_pdt = ride_utc + PDT_OFFSET
-        print(f"Ride UTC: {ride_utc}  →  PDT: {ride_pdt.strftime('%H:%M day %d')}")
+        ride_local = utc_to_local(ride_utc)
+        print(f"Ride UTC: {ride_utc}  →  Local: {ride_local.strftime('%H:%M %Z day %d')}")
 
         best = None
         best_delta = None
         for obs in observations:
-            day_diff = obs['day'] - ride_pdt.day
+            day_diff = obs['day'] - ride_local.day
             delta = (day_diff * 1440 +
-                     (obs['hour'] - ride_pdt.hour) * 60 +
-                     (obs['minute'] - ride_pdt.minute))
+                     (obs['hour'] - ride_local.hour) * 60 +
+                     (obs['minute'] - ride_local.minute))
             in_window = -120 <= delta <= 30
             marker = ""
             if in_window and (best_delta is None or abs(delta) < abs(best_delta)):

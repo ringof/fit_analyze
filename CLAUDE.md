@@ -47,7 +47,7 @@ Data flow: FIT file → fitparse → `analyze()` → text summary + plot data �
 - `RIDER_MASS = 65.9` kg — update when weight changes
 - `DEFAULT_FTP = 200` W — functional threshold power
 - `DEFAULT_CDA = 0.26` m² — drag area estimate
-- `PDT_OFFSET = timedelta(hours=-7)` — hardcoded to PDT (no auto DST)
+- `LA_TZ` — uses `zoneinfo.ZoneInfo("America/Los_Angeles")` for auto DST; falls back to UTC-7 on Python < 3.9
 - Strand GPS bounding boxes define section detection (~32.678N to ~32.593N)
 
 ## Coding Conventions
@@ -68,7 +68,7 @@ Generated alongside the input FIT file:
 ## Known Limitations
 
 - KNZY HTML scraping is fragile to page structure changes
-- Timezone hardcoded to PDT (UTC-7)
+- Timezone falls back to fixed PDT (UTC-7) on Python < 3.9 (no zoneinfo)
 - GPS section detection depends on signal quality
 - CdA is a single estimate, not regression-fitted (future: `chung_fit.py`)
 

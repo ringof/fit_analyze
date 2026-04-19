@@ -57,7 +57,12 @@ ACTIVE_PWR_MIN = 20   # W — fallback when cadence absent
 
 # ── KNZY weather station ─────────────────────────────────────────────────────
 KNZY_URL    = "https://forecast.weather.gov/data/obhistory/KNZY.html"
-PDT_OFFSET  = timedelta(hours=-7)   # PDT = UTC-7 (Apr-Oct)
+try:
+    from zoneinfo import ZoneInfo
+    LA_TZ = ZoneInfo("America/Los_Angeles")
+except ImportError:
+    LA_TZ = None  # Python < 3.9 fallback: use fixed UTC-7
+PDT_OFFSET  = timedelta(hours=-7)   # fallback when zoneinfo unavailable
 
 # ── wind direction lookup ─────────────────────────────────────────────────────
 WIND_DIR_DEG = {
@@ -157,6 +162,13 @@ def despike_conservative(pwr, cad, lookback=15):
                 cad_fixed[i] = True
 
     return fp, fc, pwr_fixed, cad_fixed
+
+
+def utc_to_local(dt_utc):
+    """Convert UTC datetime to America/Los_Angeles, with fixed UTC-7 fallback."""
+    if LA_TZ is not None:
+        return dt_utc.astimezone(LA_TZ)
+    return dt_utc + PDT_OFFSET
 
 
 def sc_to_deg(sc):
@@ -308,17 +320,17 @@ def find_best_knzy_obs(observations, ride_start_utc):
     """
     Find the KNZY observation immediately before or closest to ride start.
     ride_start_utc: datetime in UTC.
-    KNZY times are PDT (UTC-7). Observations are at :52 past each hour.
+    KNZY times are local (Pacific). Observations are at :52 past each hour.
     Returns the best matching observation dict, or None.
     """
     if not observations:
         return None
 
-    # Convert ride start to PDT
-    ride_start_pdt = ride_start_utc + PDT_OFFSET
-    ride_day  = ride_start_pdt.day
-    ride_hour = ride_start_pdt.hour
-    ride_min  = ride_start_pdt.minute
+    # Convert ride start to local Pacific time
+    ride_start_local = utc_to_local(ride_start_utc)
+    ride_day  = ride_start_local.day
+    ride_hour = ride_start_local.hour
+    ride_min  = ride_start_local.minute
 
     # Score each observation by time distance to ride start
     # Prefer observations that are before or at ride start
@@ -333,12 +345,26 @@ def find_best_knzy_obs(observations, ride_start_utc):
                         (obs['hour'] - ride_hour) * 60 +
                         (obs['minute'] - ride_min))
 
-        # Prefer observations up to 2 hours before ride start
-        # The 04:52 observation is ideal for a ~04:23 UTC (start) ride
+        # Prefer the closest preceding observation (delta <= 0), up to 2 hours before.
+        # Fall back to future observations (up to +30 min) only if none preceding.
         if -120 <= delta_minutes <= 30:
-            if best_delta is None or abs(delta_minutes) < abs(best_delta):
+            if best_delta is None:
                 best = obs
                 best_delta = delta_minutes
+            elif delta_minutes <= 0 and best_delta > 0:
+                # Preceding beats any future observation
+                best = obs
+                best_delta = delta_minutes
+            elif delta_minutes <= 0 and best_delta <= 0:
+                # Both preceding — pick closest to ride start
+                if delta_minutes > best_delta:
+                    best = obs
+                    best_delta = delta_minutes
+            elif delta_minutes > 0 and best_delta > 0:
+                # Both future (fallback) — pick closest
+                if delta_minutes < best_delta:
+                    best = obs
+                    best_delta = delta_minutes
 
     return best
 
@@ -630,9 +656,9 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
 
     p("\n── WIND CONDITIONS (KNZY / NAS North Island) ───────────────")
     if knzy_auto and knzy_obs:
-        ride_pdt = (ride_start_utc + PDT_OFFSET).strftime('%H:%M PDT') if ride_start_utc else '?'
+        ride_local = utc_to_local(ride_start_utc).strftime('%H:%M %Z') if ride_start_utc else '?'
         p(f"  Auto-fetched from KNZY")
-        p(f"  Ride start:          {ride_pdt}")
+        p(f"  Ride start:          {ride_local}")
         p(f"  Observation used:    Day {knzy_obs['day']} {knzy_obs['hour']:02d}:{knzy_obs['minute']:02d} PDT")
         p(f"  Raw observation:     {knzy_obs['raw']}")
         if wind_spd > 0:
@@ -890,12 +916,15 @@ def main():
     print(result)
 
     if args.plot and plot_data:
-        wind_desc = plot_data.get('wind_desc', '')
-        plot_strand(plot_data['records'],
-                    plot_data['strand_start_idx'],
-                    plot_data['strand_end_idx'],
-                    wind_desc=wind_desc,
-                    fit_path=args.fit_file)
+        if plot_data['strand_start_idx'] is None or plot_data['strand_end_idx'] is None:
+            print("WARNING: --plot requires Strand section detection. No plot generated.")
+        else:
+            wind_desc = plot_data.get('wind_desc', '')
+            plot_strand(plot_data['records'],
+                        plot_data['strand_start_idx'],
+                        plot_data['strand_end_idx'],
+                        wind_desc=wind_desc,
+                        fit_path=args.fit_file)
 
     out_path = args.fit_file.replace('.fit', '_summary.txt')
     try:
