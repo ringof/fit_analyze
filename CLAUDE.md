@@ -13,6 +13,9 @@ python3 fit_analyze.py <file.fit> [--ftp 200] [--rest-hr 72] [--max-hr 189] [--p
 # Override wind (skips KNZY auto-fetch)
 python3 fit_analyze.py <file.fit> --wind-speed 12 --wind-dir SE
 
+# CdA regression from accumulated ride data
+grep "DATA:" fit_files/*_summary.txt | python3 chung_fit.py -
+
 # Debug weather fetch
 python3 knzy_test.py --date 2026-04-17 --time-utc 11:23
 ```
@@ -39,13 +42,18 @@ Single-script design (`fit_analyze.py`, ~800 lines). Key functions:
 | `headwind_mph()` | Vector wind component along route heading |
 | `plot_strand()` | Generate gnuplot visualization |
 
+Companion script (`chung_fit.py`, ~350 lines): CdA/Crr regression from accumulated DATA lines.
+
 Data flow: FIT file → fitparse → `analyze()` → text summary + plot data → file output
+Data flow: DATA lines → `chung_fit.py` → CdA regression report
 
 ## Key Configuration (top of fit_analyze.py)
 
 - `RIDER_MASS = 65.9` kg — update when weight changes
 - `DEFAULT_FTP = 200` W — functional threshold power
 - `DEFAULT_CDA = 0.26` m² — drag area estimate
+- `DEFAULT_CRR = 0.006` — Schwalbe Marathon GreenGuard at ~70 psi
+- `BIKE_MASS = 13.6` kg (30 lbs)
 - `LA_TZ` — uses `zoneinfo.ZoneInfo("America/Los_Angeles")` for auto DST; falls back to UTC-7 on Python < 3.9
 - Strand GPS bounding boxes define section detection (~32.678N to ~32.593N)
 
@@ -69,7 +77,7 @@ Generated alongside the input FIT file:
 - KNZY HTML scraping is fragile to page structure changes
 - Timezone falls back to fixed PDT (UTC-7) on Python < 3.9 (no zoneinfo)
 - GPS section detection depends on signal quality
-- CdA is a single estimate, not regression-fitted (future: `chung_fit.py`)
+- CdA regression (`chung_fit.py`) needs 5+ rides with varied wind for tight confidence intervals
 
 ## Git Notes
 

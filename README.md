@@ -10,6 +10,7 @@ Chung method.
 | File | Purpose |
 |------|---------|
 | `fit_analyze.py` | Main analysis script |
+| `chung_fit.py` | CdA/Crr regression from accumulated ride data |
 | `knzy_test.py` | Standalone KNZY weather fetch debugger |
 
 ## Dependencies
@@ -100,8 +101,8 @@ A structured single-line DATA record per ride, using Strand section values:
 DATA: 2026-04-17 | pwr=122.1W | spd=5.452m/s | NP=138W | wind=12mph_SE | hdg=150deg | hw=11.6mph | rho=1.225 | EI=0.895 | CLEAN
 ```
 
-Accumulate these lines across rides for CdA/Crr regression (separate script,
-to be built once sufficient rides are logged with varied wind conditions).
+Accumulate these lines across rides and feed them to `chung_fit.py` for
+CdA/Crr regression (see [CdA regression](#cda-regression-chung_fitpy) below).
 
 ## Configuration constants
 
@@ -113,6 +114,8 @@ DEFAULT_FTP     = 200     # W — update after FTP test
 DEFAULT_MAX_HR  = 189     # bpm — observed maximum
 DEFAULT_REST_HR = 72      # bpm — morning resting average
 DEFAULT_CDA     = 0.26    # m² — back-calculated from one ride; refine via Chung
+DEFAULT_CRR     = 0.006   # Schwalbe Marathon GreenGuard at ~70 psi
+BIKE_MASS       = 13.6    # kg (30 lbs)
 
 # Active riding detection thresholds
 ACTIVE_CAD_MIN  = 10      # rpm
@@ -202,9 +205,9 @@ mechanical work is unchanged. The kJ figure is not affected by this.
 ### CdA (coefficient of drag area)
 
 Set to 0.26 m², back-calculated from one ride's power, speed, and wind data.
-This is a rough estimate. The Chung regression across multiple rides with varied
-wind conditions will produce a better-constrained value. The aero penalty figure
-in the output is approximate context, not a precise measurement.
+This is a rough estimate. Use `chung_fit.py` with accumulated ride data to
+produce a better-constrained value. The aero penalty figure in the output is
+approximate context, not a precise measurement.
 
 ## Wind source
 
@@ -231,15 +234,50 @@ and time-matching logic. Useful when auto-fetch produces unexpected results.
 
 - KNZY fetching is HTML-scrape based and will break if NWS changes page structure.
 - Timezone handling uses `zoneinfo` (Python 3.9+) for automatic PDT/PST. Falls back to fixed UTC−7 on older Python.
-- CdA is a single back-calculated estimate, not a fitted value.
+- CdA regression needs 5+ rides with varied wind for tight confidence intervals.
 - Section detection depends on GPS quality; poor GPS near the entry box may
   cause the section to be missed or mis-anchored.
 - Active detection (cad > 10 or pwr > 20W) is a heuristic and may misclassify
   some records during unusual conditions.
 
+## CdA regression (chung_fit.py)
+
+Companion script that solves for aerodynamic drag area (CdA) from accumulated
+DATA lines using the Chung method power balance equation:
+
+```
+P = 0.5 × ρ × CdA × (v + v_hw)² × v  +  Crr × m × g × v
+```
+
+This is linear in CdA and Crr, so ordinary least squares gives a direct solution.
+No external libraries required.
+
+### Usage
+
+```bash
+# CdA-only mode (Crr fixed at manufacturer value 0.006)
+grep "DATA:" fit_files/*_summary.txt | python3 chung_fit.py -
+
+# From a data file
+python3 chung_fit.py ride_log.txt
+
+# Two-parameter mode (solve for both CdA and Crr)
+python3 chung_fit.py ride_log.txt --solve-crr
+
+# Include STOPS-CHECK rides (default: CLEAN only)
+python3 chung_fit.py ride_log.txt --include-stops
+
+# Override Crr or total mass
+python3 chung_fit.py ride_log.txt --crr 0.005
+python3 chung_fit.py ride_log.txt --mass 82.0
+```
+
+Needs 2+ rides for CdA-only, 3+ for `--solve-crr`. Confidence intervals tighten
+significantly with 5+ rides across varied wind/speed conditions. Uses average power
+(not NP) — the power balance describes steady-state equilibrium.
+
 ## Future work
 
-- `chung_fit.py` — CdA/Crr regression from accumulated DATA lines
 - Temperature correction to air density (RHO) from KNZY temperature field
 - Configurable route profiles beyond Silver Strand
 - Remove Python 3.9+ requirement for zoneinfo (backports exist but add a dependency)

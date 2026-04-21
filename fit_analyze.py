@@ -35,6 +35,8 @@ RIDER_MASS      = 65.9   # kg
 # ── physics constants ────────────────────────────────────────────────────────
 RHO         = 1.225  # air density kg/m³ at sea level
 DEFAULT_CDA = 0.26   # m² — back-calculated from 2026-04-17 ride, refine via Chung
+DEFAULT_CRR = 0.006  # Schwalbe Marathon GreenGuard at ~70 psi (from manufacturer data)
+BIKE_MASS   = 13.6   # kg (30 lbs)
 
 # ── Silver Strand geolocation anchors ────────────────────────────────────────
 # ±0.005° ≈ 500m boxes — wide enough for GPS scatter and road position variation
@@ -621,7 +623,11 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
         p(f"  Avg HR:              {sr_avg_hr:.1f} bpm")
         p(f"  Cadence median:      {sr_avg_cad_med:.0f} rpm")
         p(f"  Normalized power:    {sr_np:.0f} W")
+        sr_rr_watts = DEFAULT_CRR * sr_avg_spd_ms * (RIDER_MASS + BIKE_MASS) * 9.81
+        sr_aero_watts = 0.5 * RHO * DEFAULT_CDA * sr_avg_spd_ms**3
         p(f"  Efficiency Index:    {sr_ei:.3f} W/bpm  ← primary trend metric")
+        p(f"  Est. rolling loss:   {sr_rr_watts:.0f} W  (Crr={DEFAULT_CRR})")
+        p(f"  Est. aero drag:      {sr_aero_watts:.0f} W  (CdA={DEFAULT_CDA})")
         if strand_stops:
             p(f"  !! Stops >30s:       {len(strand_stops)} detected")
             for sdist, sdur in strand_stops:
@@ -676,7 +682,7 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
     p("\n── CHUNG METHOD DATA (accumulate across rides) ──────────────")
     p("  # Paste DATA lines into a ride log for CdA/Crr regression.")
     p("  # Uses Strand section values — open fetch, consistent heading.")
-    p("  # Fields: date | pwr | spd | NP | wind | hdg | hw | rho | EI | status")
+    p("  # Fields: date | pwr | spd | NP | wind | hdg | hw | rho | Crr | EI | status")
     chung_date = str(session.get('start_time', '')).split(' ')[0]
     chung_pwr  = sr_avg_pwr    if strand_found else avg_pwr_active
     chung_spd  = sr_avg_spd_ms if strand_found else avg_spd_ms
@@ -690,6 +696,7 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
       f" | hdg={route_hdg}deg"
       f" | hw={hw_val:.1f}mph"
       f" | rho={RHO:.3f}"
+      f" | Crr={DEFAULT_CRR:.4f}"
       f" | EI={chung_ei:.3f}"
       f" | {chung_clean}")
 
