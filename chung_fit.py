@@ -164,9 +164,13 @@ def build_regression_terms(rides, mass, rho_override=None):
     """Compute per-ride regression terms from the power balance equation.
 
     For each ride:
-        A_i = 0.5 × ρ × (v + v_hw)² × v      (aero coefficient of CdA)
-        R_i = m × g × v                         (rolling coefficient of Crr)
+        A_i = 0.5 × ρ × |v_air| × v_air × v    (aero coefficient of CdA)
+        R_i = m × g × v                           (rolling coefficient of Crr)
         P_i = measured average power
+
+    v_air = v + v_hw (rider ground speed + headwind component).
+    Uses signed form |v_air|×v_air instead of v_air² to correctly handle
+    the rare case where tailwind exceeds rider speed (assistive drag).
 
     Returns (A, R, P, dates) as parallel lists.
     """
@@ -176,7 +180,8 @@ def build_regression_terms(rides, mass, rho_override=None):
         v_hw = r['hw'] * MPH_TO_MS                # headwind in m/s
         rho = rho_override if rho_override else r['rho']
 
-        a_i = 0.5 * rho * (v + v_hw) ** 2 * v    # aero term
+        v_air = v + v_hw                          # relative airspeed
+        a_i = 0.5 * rho * abs(v_air) * v_air * v # signed aero term
         r_i = mass * G * v                        # rolling term
         p_i = r['pwr']                            # measured power
 

@@ -199,18 +199,20 @@ def compute_zones(rest_hr, max_hr):
 def normalized_power(power_series, window=30):
     """
     Compute normalized power per Coggan (2003).
-    Standard definition: 30-second rolling mean of power^4, then mean of
-    those values raised to 1/4. Applied to a per-second power series.
+    1. Compute 30-second rolling average of power
+    2. Raise each rolling average to the 4th power
+    3. Take the mean of those 4th powers
+    4. Take the 4th root
     Used here for section-level NP (Strand) where Garmin session NP is
     unavailable. Garmin session NP is used for full-ride display.
     """
     if len(power_series) < window:
         return statistics.mean(power_series) if power_series else 0
-    rolling4 = []
+    rolling_avg = []
     for i in range(window, len(power_series) + 1):
-        w = power_series[i-window:i]
-        rolling4.append((sum(p**4 for p in w) / window) ** 0.25)
-    return statistics.mean(rolling4) if rolling4 else 0
+        rolling_avg.append(sum(power_series[i-window:i]) / window)
+    mean_4th = sum(a ** 4 for a in rolling_avg) / len(rolling_avg)
+    return mean_4th ** 0.25
 
 
 # ── KNZY fetch and parse ──────────────────────────────────────────────────────
@@ -529,6 +531,11 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
                 if dur > STOP_FLAG_SECS:
                     strand_stops.append((sr[stop_start]['dist']/1609.34, dur))
                 in_stop = False
+        # flush stop still in progress at section end
+        if in_stop:
+            dur = len(sr) - stop_start
+            if dur > STOP_FLAG_SECS:
+                strand_stops.append((sr[stop_start]['dist']/1609.34, dur))
 
         chung_clean = "CLEAN" if not strand_stops else "STOPS-CHECK"
     else:
