@@ -19,6 +19,7 @@ import re
 import calendar
 import urllib.request
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 try:
     from fitparse import FitFile
@@ -65,7 +66,7 @@ try:
     LA_TZ = ZoneInfo("America/Los_Angeles")
 except ImportError:
     LA_TZ = None  # Python < 3.9 fallback: use fixed UTC-7
-PDT_OFFSET  = timedelta(hours=-7)   # fallback when zoneinfo unavailable
+LOCAL_OFFSET = timedelta(hours=-7)   # fallback when zoneinfo unavailable (approximate)
 
 # ── wind direction lookup ─────────────────────────────────────────────────────
 WIND_DIR_DEG = {
@@ -137,7 +138,7 @@ def utc_to_local(dt_utc):
     """Convert UTC datetime to America/Los_Angeles, with fixed UTC-7 fallback."""
     if LA_TZ is not None:
         return dt_utc.astimezone(LA_TZ)
-    return dt_utc + PDT_OFFSET
+    return dt_utc + LOCAL_OFFSET
 
 
 def sc_to_deg(sc):
@@ -641,10 +642,13 @@ def analyze(fit_path, ftp, rest_hr, max_hr,
 
     p("\n── WIND CONDITIONS (KNZY / NAS North Island) ───────────────")
     if knzy_auto and knzy_obs:
-        ride_local = utc_to_local(ride_start_utc).strftime('%H:%M %Z') if ride_start_utc else '?'
+        ride_local_dt = utc_to_local(ride_start_utc) if ride_start_utc else None
+        ride_local = ride_local_dt.strftime('%H:%M %Z').strip() if ride_local_dt else '?'
+        tz_label = ride_local_dt.strftime('%Z') if ride_local_dt else ''
+        tz_label = tz_label or 'local'  # fallback for naive datetime
         p(f"  Auto-fetched from KNZY")
         p(f"  Ride start:          {ride_local}")
-        p(f"  Observation used:    Day {knzy_obs['day']} {knzy_obs['hour']:02d}:{knzy_obs['minute']:02d} PDT")
+        p(f"  Observation used:    Day {knzy_obs['day']} {knzy_obs['hour']:02d}:{knzy_obs['minute']:02d} {tz_label}")
         p(f"  Raw observation:     {knzy_obs['raw']}")
         if wind_spd > 0:
             p(f"  Parsed:              {wind_spd:.0f} mph from {wind_dir}")
@@ -744,7 +748,7 @@ def plot_strand(records, strand_start_idx, strand_end_idx, wind_desc="", fit_pat
 
     # Determine output PNG path alongside the FIT file
     if fit_path:
-        base = fit_path.replace('.fit', '_strand.png')
+        base = str(Path(fit_path).with_suffix('')) + '_strand.png'
     else:
         base = 'strand_plot.png'
 
@@ -940,7 +944,7 @@ def main():
                         fit_path=args.fit_file,
                         strand_stats=plot_data.get('strand_stats'))
 
-    out_path = args.fit_file.replace('.fit', '_summary.txt')
+    out_path = str(Path(args.fit_file).with_suffix('')) + '_summary.txt'
     try:
         with open(out_path, 'w') as f:
             f.write(result)

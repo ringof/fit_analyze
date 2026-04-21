@@ -141,7 +141,7 @@ def load_data(filepath, include_stops=False):
         source = filepath
 
     rides = []
-    skipped = {'no_strand': 0, 'stops': 0, 'parse_fail': 0}
+    skipped = {'no_strand': 0, 'stops': 0}
 
     for line in lines:
         d = parse_data_line(line)
